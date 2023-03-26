@@ -141,7 +141,7 @@ pub struct Document {
 
     syntax: Option<Syntax>,
     /// Corresponding language scope name. Usually `source.<lang>`.
-    pub(crate) language: Option<Arc<LanguageConfiguration>>,
+    pub language: Option<Arc<LanguageConfiguration>>,
 
     /// Pending changes since last history commit.
     changes: ChangeSet,
@@ -165,7 +165,7 @@ pub struct Document {
     pub(crate) modified_since_accessed: bool,
 
     diagnostics: Vec<Diagnostic>,
-    language_server: Option<Arc<helix_lsp::Client>>,
+    pub language_server: Option<Arc<helix_lsp::Client>>,
 
     diff_handle: Option<DiffHandle>,
     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
@@ -978,7 +978,12 @@ impl Document {
             // map state.diagnostics over changes::map_pos too
             for diagnostic in &mut self.diagnostics {
                 diagnostic.range.start = changes.map_pos(diagnostic.range.start, Assoc::After);
-                diagnostic.range.end = changes.map_pos(diagnostic.range.end, Assoc::After);
+                let assoc = if diagnostic.ends_at_word {
+                    Assoc::AfterWord
+                } else {
+                    Assoc::Before
+                };
+                diagnostic.range.end = changes.map_pos(diagnostic.range.end, assoc);
                 diagnostic.line = self.text.char_to_line(diagnostic.range.start);
             }
             self.diagnostics
@@ -1385,8 +1390,23 @@ impl Document {
         &self.diagnostics
     }
 
-    pub fn set_diagnostics(&mut self, diagnostics: Vec<Diagnostic>) {
-        self.diagnostics = diagnostics;
+    pub fn set_diagnostics(
+        &mut self,
+        diagnostics: impl IntoIterator<Item = Diagnostic>,
+        unchanged_sources: &[String],
+    ) {
+        if unchanged_sources.is_empty() {
+            self.diagnostics.clear()
+        } else {
+            self.diagnostics.retain(|diagnostic| {
+                if let Some(source) = &diagnostic.source {
+                    unchanged_sources.contains(source)
+                } else {
+                    false
+                }
+            });
+        }
+        self.diagnostics.extend(diagnostics);
         self.diagnostics
             .sort_unstable_by_key(|diagnostic| diagnostic.range);
     }

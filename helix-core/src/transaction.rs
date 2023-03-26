@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use crate::{Range, Rope, Selection, Tendril};
+use crate::{chars::char_is_word, Range, Rope, Selection, Tendril};
 use std::borrow::Cow;
 
 /// (from, to, replacement)
@@ -21,6 +21,20 @@ pub enum Operation {
 pub enum Assoc {
     Before,
     After,
+    /// Acts like `After` if a word character is inserted
+    /// after the position, otherwise acts like `Before`
+    AfterWord,
+}
+
+impl Assoc {
+    fn insert_offset(self, s: &str) -> usize {
+        match self {
+            Assoc::After => s.chars().count(),
+            Assoc::AfterWord => s.chars().take_while(|&c| char_is_word(c)).count(),
+            // return position before inserted text
+            Assoc::Before => 0,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -359,8 +373,6 @@ impl ChangeSet {
                     }
                 }
                 Insert(s) => {
-                    let ins = s.chars().count();
-
                     // a subsequent delete means a replace, consume it
                     if let Some(Delete(len)) = iter.peek() {
                         iter.next();
@@ -368,28 +380,21 @@ impl ChangeSet {
                         old_end = old_pos + len;
                         // in range of replaced text
                         if old_end > pos {
-                            // at point or tracking before
-                            if pos == old_pos || assoc == Assoc::Before {
+                            // replacement starting at the point doesn't
+                            // move the point forward
+                            if pos == old_pos {
                                 return new_pos;
-                            } else {
-                                // place to end of insert
-                                return new_pos + ins;
                             }
+                            return new_pos + assoc.insert_offset(s);
                         }
                     } else {
                         // at insert point
                         if old_pos == pos {
-                            // return position before inserted text
-                            if assoc == Assoc::Before {
-                                return new_pos;
-                            } else {
-                                // after text
-                                return new_pos + ins;
-                            }
+                            return new_pos + assoc.insert_offset(s);
                         }
                     }
 
-                    new_pos += ins;
+                    new_pos += s.chars().count();
                 }
             }
             old_pos = old_end;

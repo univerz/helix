@@ -127,6 +127,8 @@ pub struct LanguageConfiguration {
     pub auto_pairs: Option<AutoPairs>,
 
     pub rulers: Option<Vec<u16>>, // if set, override editor's rulers
+    #[serde(default)]
+    pub persistant_diagnostic_sources: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]

@@ -1444,7 +1444,7 @@ fn lsp_stop(
     for doc in cx.editor.documents_mut() {
         if doc.language_server().map_or(false, |ls| ls.id() == ls_id) {
             doc.set_language_server(None);
-            doc.set_diagnostics(Default::default());
+            doc.set_diagnostics([], &[]);
         }
     }
 

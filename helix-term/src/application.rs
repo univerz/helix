@@ -1,6 +1,7 @@
 use arc_swap::{access::Map, ArcSwap};
 use futures_util::Stream;
 use helix_core::{
+    chars::char_is_word,
     diagnostic::{DiagnosticTag, NumberOrString},
     path::get_relative_path,
     pos_at_coords, syntax, Selection,
@@ -736,6 +737,13 @@ impl Application {
                         }
                     }
                     Notification::PublishDiagnostics(mut params) => {
+                        // Sort diagnostics first by severity and then by line numbers.
+                        // Note: The `lsp::DiagnosticSeverity` enum is already defined in decreasing order
+                        params
+                            .diagnostics
+                            .sort_unstable_by_key(|d| (d.severity, d.range.start));
+                        let old_diagnostics = self.editor.diagnostics.remove(&params.uri);
+
                         let path = match params.uri.to_file_path() {
                             Ok(path) => path,
                             Err(_) => {
@@ -755,17 +763,43 @@ impl Application {
                         });
 
                         if let Some(doc) = doc {
-                            let lang_conf = doc.language_config();
-                            let text = doc.text();
+                            let lang_conf = doc.language.clone();
+                            let text = doc.text().clone();
 
+                            let mut unchaged_diag_sources_ = Vec::new();
+                            if let Some(lang_conf) = &lang_conf {
+                                if let Some(old_diagnostics) = old_diagnostics {
+                                    for source in &lang_conf.persistant_diagnostic_sources {
+                                        let new_diagnostics = params
+                                            .diagnostics
+                                            .iter()
+                                            .filter(|it| it.source.as_ref() == Some(source));
+                                        let old_diagnostics = old_diagnostics
+                                            .iter()
+                                            .filter(|it| it.source.as_ref() == Some(source));
+                                        if new_diagnostics.eq(old_diagnostics) {
+                                            unchaged_diag_sources_.push(source.clone())
+                                        }
+                                    }
+                                }
+                            }
+
+                            let unchaged_diag_sources = &unchaged_diag_sources_;
+                            let language_server = doc.language_server.clone();
                             let diagnostics = params
                                 .diagnostics
                                 .iter()
-                                .filter_map(|diagnostic| {
+                                .filter_map(move |diagnostic| {
                                     use helix_core::diagnostic::{Diagnostic, Range, Severity::*};
                                     use lsp::DiagnosticSeverity;
 
-                                    let language_server = if let Some(language_server) = doc.language_server() {
+                                    if let Some(source) = &diagnostic.source{
+                                        if unchaged_diag_sources.contains(source){
+                                            return None;
+                                        }
+                                    }
+
+                                    let language_server = if let Some(language_server) = &language_server {
                                         language_server
                                     } else {
                                         log::warn!("Discarding diagnostic because language server is not initialized: {:?}", diagnostic);
@@ -774,7 +808,7 @@ impl Application {
 
                                     // TODO: convert inside server
                                     let start = if let Some(start) = lsp_pos_to_pos(
-                                        text,
+                                        &text,
                                         diagnostic.range.start,
                                         language_server.offset_encoding(),
                                     ) {
@@ -785,7 +819,7 @@ impl Application {
                                     };
 
                                     let end = if let Some(end) = lsp_pos_to_pos(
-                                        text,
+                                        &text,
                                         diagnostic.range.end,
                                         language_server.offset_encoding(),
                                     ) {
@@ -807,7 +841,7 @@ impl Application {
                                             ),
                                         });
 
-                                    if let Some(lang_conf) = lang_conf {
+                                    if let Some(lang_conf) = &lang_conf {
                                         if let Some(severity) = severity {
                                             if severity < lang_conf.diagnostic_severity {
                                                 return None;
@@ -841,8 +875,13 @@ impl Application {
                                         Vec::new()
                                     };
 
+                                    let ends_at_word = start != end
+                                        && end != 0
+                                        && text.get_char(end - 1).map_or(false, char_is_word);
+
                                     Some(Diagnostic {
                                         range: Range { start, end },
+                                        ends_at_word,
                                         line: diagnostic.range.start.line as usize,
                                         message: diagnostic.message.clone(),
                                         severity,
@@ -851,17 +890,10 @@ impl Application {
                                         source: diagnostic.source.clone(),
                                         data: diagnostic.data.clone(),
                                     })
-                                })
-                                .collect();
+                                });
 
-                            doc.set_diagnostics(diagnostics);
+                            doc.set_diagnostics(diagnostics, unchaged_diag_sources);
                         }
-
-                        // Sort diagnostics first by severity and then by line numbers.
-                        // Note: The `lsp::DiagnosticSeverity` enum is already defined in decreasing order
-                        params
-                            .diagnostics
-                            .sort_unstable_by_key(|d| (d.severity, d.range.start));
 
                         // Insert the original lsp::Diagnostics here because we may have no open document
                         // for diagnosic message and so we can't calculate the exact position.
@@ -973,7 +1005,7 @@ impl Application {
                                 if doc.language_server().map(|server| server.id())
                                     == Some(server_id)
                                 {
-                                    doc.set_diagnostics(Vec::new());
+                                    doc.set_diagnostics([], &[]);
                                     doc.url()
                                 } else {
                                     None
