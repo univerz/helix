@@ -1,5 +1,6 @@
 use crate::{
     align_view,
+    annotations::diagnostics::InlineDiagnostics,
     document::DocumentInlayHints,
     editor::{GutterConfig, GutterType},
     graphics::Rect,
@@ -7,15 +8,18 @@ use crate::{
 };
 
 use helix_core::{
-    char_idx_at_visual_offset, doc_formatter::TextFormat, syntax::Highlight,
-    text_annotations::TextAnnotations, visual_offset_from_anchor, visual_offset_from_block,
-    Position, RopeSlice, Selection, Transaction,
+    char_idx_at_visual_offset,
+    doc_formatter::TextFormat,
+    syntax::Highlight,
+    text_annotations::TextAnnotations,
+    visual_offset_from_anchor, visual_offset_from_block, Position, RopeSlice, Selection,
+    Transaction,
+    VisualOffsetError::{PosAfterMaxRow, PosBeforeAnchorRow},
 };
 
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
-    rc::Rc,
 };
 
 const JUMP_LIST_CAPACITY: usize = 30;
@@ -213,46 +217,38 @@ impl View {
         // - 1 so we have at least one gap in the middle.
         // a height of 6 with padding of 3 on each side will keep shifting the view back and forth
         // as we type
-        let scrolloff = scrolloff.min(viewport.height.saturating_sub(1) as usize / 2);
+        let scrolloff = if CENTERING {
+            0
+        } else {
+            scrolloff.min(viewport.height.saturating_sub(1) as usize / 2)
+        };
 
         let cursor = doc.selection(self.id).primary().cursor(doc_text);
         let mut offset = self.offset;
+        let off = visual_offset_from_anchor(
+            doc_text,
+            offset.anchor,
+            cursor,
+            &text_fmt,
+            &annotations,
+            vertical_viewport_end,
+        );
 
-        let (visual_off, mut at_top) = if cursor >= offset.anchor {
-            let off = visual_offset_from_anchor(
-                doc_text,
-                offset.anchor,
-                cursor,
-                &text_fmt,
-                &annotations,
-                vertical_viewport_end,
-            );
-            (off, false)
-        } else if CENTERING {
-            // cursor out of view
-            return None;
-        } else {
-            (None, true)
-        };
-
-        let new_anchor = match visual_off {
-            Some((visual_pos, _)) if visual_pos.row < scrolloff + offset.vertical_offset => {
-                if CENTERING && visual_pos.row < offset.vertical_offset {
+        let (new_anchor, at_top) = match off {
+            Ok((visual_pos, _)) if visual_pos.row < scrolloff + offset.vertical_offset => {
+                if CENTERING {
                     // cursor out of view
                     return None;
                 }
-                at_top = true;
-                true
+                (true, true)
             }
-            Some((visual_pos, _)) if visual_pos.row + scrolloff + 1 >= vertical_viewport_end => {
-                if CENTERING && visual_pos.row >= vertical_viewport_end {
-                    // cursor out of view
-                    return None;
-                }
-                true
+            Ok((visual_pos, _)) if visual_pos.row + scrolloff >= vertical_viewport_end => {
+                (true, false)
             }
-            Some(_) => false,
-            None => true,
+            Ok((_, _)) => (false, false),
+            Err(_) if CENTERING => return None,
+            Err(PosBeforeAnchorRow) => (true, true),
+            Err(PosAfterMaxRow) => (true, false),
         };
 
         if new_anchor {
@@ -269,8 +265,8 @@ impl View {
             offset.horizontal_offset = 0;
         } else {
             // determine the current visual column of the text
-            let col = visual_off
-                .unwrap_or_else(|| {
+            let col = off
+                .unwrap_or_else(|_| {
                     visual_offset_from_block(
                         doc_text,
                         offset.anchor,
@@ -360,8 +356,9 @@ impl View {
         );
 
         match pos {
-            Some((Position { row, .. }, _)) => row.saturating_sub(self.offset.vertical_offset),
-            None => visual_height.saturating_sub(1),
+            Ok((Position { row, .. }, _)) => row.saturating_sub(self.offset.vertical_offset),
+            Err(PosAfterMaxRow) => visual_height.saturating_sub(1),
+            Err(PosBeforeAnchorRow) => 0,
         }
     }
 
@@ -390,7 +387,8 @@ impl View {
             &text_fmt,
             &annotations,
             viewport.height as usize,
-        )?
+        )
+        .ok()?
         .0;
         if pos.row < self.offset.vertical_offset {
             return None;
@@ -405,47 +403,58 @@ impl View {
     }
 
     /// Get the text annotations to display in the current view for the given document and theme.
-    pub fn text_annotations(&self, doc: &Document, theme: Option<&Theme>) -> TextAnnotations {
-        // TODO custom annotations for custom views like side by side diffs
+    pub fn text_annotations<'a>(
+        &self,
+        doc: &'a Document,
+        theme: Option<&Theme>,
+    ) -> TextAnnotations<'a> {
+        let mut text_annotations = TextAnnotations::default();
 
-        let mut text_annotations = doc.text_annotations(theme);
-
-        let DocumentInlayHints {
+        if let Some(DocumentInlayHints {
             id: _,
             type_inlay_hints,
             parameter_inlay_hints,
             other_inlay_hints,
             padding_before_inlay_hints,
             padding_after_inlay_hints,
-        } = match doc.inlay_hints.get(&self.id) {
-            Some(doc_inlay_hints) => doc_inlay_hints,
-            None => return text_annotations,
+        }) = doc.inlay_hints.get(&self.id)
+        {
+            let type_style = theme
+                .and_then(|t| t.find_scope_index("ui.virtual.inlay-hint.type"))
+                .map(Highlight);
+            let parameter_style = theme
+                .and_then(|t| t.find_scope_index("ui.virtual.inlay-hint.parameter"))
+                .map(Highlight);
+            let other_style = theme
+                .and_then(|t| t.find_scope_index("ui.virtual.inlay-hint"))
+                .map(Highlight);
+
+            // Overlapping annotations are ignored apart from the first so the order here is not random:
+            // types -> parameters -> others should hopefully be the "correct" order for most use cases,
+            // with the padding coming before and after as expected.
+            text_annotations
+                .add_inline_annotations(padding_before_inlay_hints, None)
+                .add_inline_annotations(type_inlay_hints, type_style)
+                .add_inline_annotations(parameter_inlay_hints, parameter_style)
+                .add_inline_annotations(other_inlay_hints, other_style)
+                .add_inline_annotations(padding_after_inlay_hints, None);
         };
-
-        let type_style = theme
-            .and_then(|t| t.find_scope_index("ui.virtual.inlay-hint.type"))
-            .map(Highlight);
-        let parameter_style = theme
-            .and_then(|t| t.find_scope_index("ui.virtual.inlay-hint.parameter"))
-            .map(Highlight);
-        let other_style = theme
-            .and_then(|t| t.find_scope_index("ui.virtual.inlay-hint"))
-            .map(Highlight);
-
-        let mut add_annotations = |annotations: &Rc<[_]>, style| {
-            if !annotations.is_empty() {
-                text_annotations.add_inline_annotations(Rc::clone(annotations), style);
-            }
-        };
-
-        // Overlapping annotations are ignored apart from the first so the order here is not random:
-        // types -> parameters -> others should hopefully be the "correct" order for most use cases,
-        // with the padding coming before and after as expected.
-        add_annotations(padding_before_inlay_hints, None);
-        add_annotations(type_inlay_hints, type_style);
-        add_annotations(parameter_inlay_hints, parameter_style);
-        add_annotations(other_inlay_hints, other_style);
-        add_annotations(padding_after_inlay_hints, None);
+        let width = self.inner_width(doc);
+        let config = doc.config.load();
+        if config.lsp.inline_diagnostics.enable(width) {
+            let config = config.lsp.inline_diagnostics.clone();
+            let cursor = doc
+                .selection(self.id)
+                .primary()
+                .cursor(doc.text().slice(..));
+            text_annotations.add_line_annotation(InlineDiagnostics::new(
+                doc.diagnostics(),
+                cursor,
+                width,
+                self.offset.horizontal_offset,
+                config,
+            ));
+        }
 
         text_annotations
     }

@@ -121,20 +121,35 @@ pub fn visual_offset_from_block(
     annotations: &TextAnnotations,
 ) -> (Position, usize) {
     let mut last_pos = Position::default();
-    let (formatter, block_start) =
+    let mut formatter =
         DocumentFormatter::new_at_prev_checkpoint(text, text_fmt, annotations, anchor);
-    let mut char_pos = block_start;
+    let block_start = formatter.next_char_pos();
 
-    for (grapheme, vpos) in formatter {
-        last_pos = vpos;
-        char_pos += grapheme.doc_chars();
-
-        if char_pos > pos {
-            return (last_pos, block_start);
+    while let Some(grapheme) = formatter.next() {
+        last_pos = grapheme.visual_pos;
+        if formatter.next_char_pos() > pos {
+            return (grapheme.visual_pos, block_start);
         }
     }
 
     (last_pos, block_start)
+}
+
+/// Returns the height of the given text when softwrapping
+pub fn softwrapped_dimensions(text: RopeSlice, text_fmt: &TextFormat) -> (usize, u16) {
+    let last_pos =
+        visual_offset_from_block(text, 0, usize::MAX, text_fmt, &TextAnnotations::default()).0;
+    if last_pos.row == 0 {
+        (1, last_pos.col as u16)
+    } else {
+        (last_pos.row + 1, text_fmt.viewport_width)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum VisualOffsetError {
+    PosBeforeAnchorRow,
+    PosAfterMaxRow,
 }
 
 /// Returns the visual offset from the start of the visual line
@@ -146,28 +161,45 @@ pub fn visual_offset_from_anchor(
     text_fmt: &TextFormat,
     annotations: &TextAnnotations,
     max_rows: usize,
-) -> Option<(Position, usize)> {
-    let (formatter, block_start) =
+) -> Result<(Position, usize), VisualOffsetError> {
+    let mut formatter =
         DocumentFormatter::new_at_prev_checkpoint(text, text_fmt, annotations, anchor);
-    let mut char_pos = block_start;
     let mut anchor_line = None;
+    let mut found_pos = None;
     let mut last_pos = Position::default();
 
-    for (grapheme, vpos) in formatter {
-        last_pos = vpos;
-        char_pos += grapheme.doc_chars();
+    let block_start = formatter.next_char_pos();
+    if pos < block_start {
+        return Err(VisualOffsetError::PosBeforeAnchorRow);
+    }
 
-        if char_pos > anchor && anchor_line.is_none() {
-            anchor_line = Some(last_pos.row);
+    while let Some(grapheme) = formatter.next() {
+        last_pos = grapheme.visual_pos;
+
+        if formatter.next_char_pos() > pos {
+            if let Some(anchor_line) = anchor_line {
+                last_pos.row -= anchor_line;
+                return Ok((last_pos, block_start));
+            } else {
+                found_pos = Some(last_pos);
+            }
         }
-        if char_pos > pos {
-            last_pos.row -= anchor_line.unwrap();
-            return Some((last_pos, block_start));
+        if formatter.next_char_pos() > anchor && anchor_line.is_none() {
+            if let Some(mut found_pos) = found_pos {
+                return if found_pos.row == last_pos.row {
+                    found_pos.row = 0;
+                    Ok((found_pos, block_start))
+                } else {
+                    Err(VisualOffsetError::PosBeforeAnchorRow)
+                };
+            } else {
+                anchor_line = Some(last_pos.row);
+            }
         }
 
         if let Some(anchor_line) = anchor_line {
-            if vpos.row >= anchor_line + max_rows {
-                return None;
+            if grapheme.visual_pos.row >= anchor_line + max_rows {
+                return Err(VisualOffsetError::PosAfterMaxRow);
             }
         }
     }
@@ -175,7 +207,7 @@ pub fn visual_offset_from_anchor(
     let anchor_line = anchor_line.unwrap_or(last_pos.row);
     last_pos.row -= anchor_line;
 
-    Some((last_pos, block_start))
+    Ok((last_pos, block_start))
 }
 
 /// Convert (line, column) coordinates to a character index.
@@ -293,10 +325,11 @@ pub fn char_idx_at_visual_offset<'a>(
     text_fmt: &TextFormat,
     annotations: &TextAnnotations,
 ) -> (usize, usize) {
+    let mut pos = anchor;
     // convert row relative to visual line containing anchor to row relative to a block containing anchor (anchor may change)
     loop {
         let (visual_pos_in_block, block_char_offset) =
-            visual_offset_from_block(text, anchor, anchor, text_fmt, annotations);
+            visual_offset_from_block(text, anchor, pos, text_fmt, annotations);
         row_offset += visual_pos_in_block.row as isize;
         anchor = block_char_offset;
         if row_offset >= 0 {
@@ -308,10 +341,10 @@ pub fn char_idx_at_visual_offset<'a>(
             break;
         }
         // the row_offset is negative so we need to look at the previous block
-        // set the anchor to the last char before the current block
-        // this char index is also always a line earlier so increase the row_offset by 1
+        // set the anchor to the last char before the current block so that we can compute
+        // the distance of this block from the start of the previous block
+        pos = anchor;
         anchor -= 1;
-        row_offset += 1;
     }
 
     char_idx_at_visual_block_offset(
@@ -343,34 +376,33 @@ pub fn char_idx_at_visual_block_offset(
     text_fmt: &TextFormat,
     annotations: &TextAnnotations,
 ) -> (usize, usize) {
-    let (formatter, mut char_idx) =
+    let mut formatter =
         DocumentFormatter::new_at_prev_checkpoint(text, text_fmt, annotations, anchor);
-    let mut last_char_idx = char_idx;
+    let mut last_char_idx = formatter.next_char_pos();
     let mut last_char_idx_on_line = None;
     let mut last_row = 0;
-    for (grapheme, grapheme_pos) in formatter {
-        match grapheme_pos.row.cmp(&row) {
+    for grapheme in &mut formatter {
+        match grapheme.visual_pos.row.cmp(&row) {
             Ordering::Equal => {
-                if grapheme_pos.col + grapheme.width() > column {
+                if grapheme.visual_pos.col + grapheme.width() > column {
                     if !grapheme.is_virtual() {
-                        return (char_idx, 0);
+                        return (grapheme.char_idx, 0);
                     } else if let Some(char_idx) = last_char_idx_on_line {
                         return (char_idx, 0);
                     }
                 } else if !grapheme.is_virtual() {
-                    last_char_idx_on_line = Some(char_idx)
+                    last_char_idx_on_line = Some(grapheme.char_idx)
                 }
             }
             Ordering::Greater => return (last_char_idx, row - last_row),
             _ => (),
         }
 
-        last_char_idx = char_idx;
-        last_row = grapheme_pos.row;
-        char_idx += grapheme.doc_chars();
+        last_char_idx = grapheme.char_idx;
+        last_row = grapheme.visual_pos.row;
     }
 
-    (char_idx, 0)
+    (formatter.next_char_pos(), 0)
 }
 
 #[cfg(test)]
