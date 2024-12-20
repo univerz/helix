@@ -69,7 +69,7 @@ fn lsp_location_to_location(
     location: lsp::Location,
     offset_encoding: OffsetEncoding,
 ) -> Option<Location> {
-    let uri = match location.uri.try_into() {
+    let uri = match location.uri.as_str().try_into() {
         Ok(uri) => uri,
         Err(err) => {
             log::warn!("discarding invalid or unsupported URI: {err}");
@@ -474,7 +474,7 @@ pub fn workspace_symbol_picker(cx: &mut Context) {
                     let response: Vec<_> = symbols
                         .into_iter()
                         .filter_map(|symbol| {
-                            let uri = match Uri::try_from(&symbol.location.uri) {
+                            let uri = match Uri::try_from(symbol.location.uri.as_str()) {
                                 Ok(uri) => uri,
                                 Err(err) => {
                                     log::warn!("discarding symbol with invalid URI: {err}");
@@ -539,7 +539,7 @@ pub fn workspace_symbol_picker(cx: &mut Context) {
                     .to_string()
                     .into()
             } else {
-                item.symbol.location.uri.to_string().into()
+                item.symbol.location.uri.as_str().into()
             }
         }),
     ];

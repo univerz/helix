@@ -723,7 +723,7 @@ impl Application {
                         });
                     }
                     Notification::PublishDiagnostics(params) => {
-                        let uri = match helix_core::Uri::try_from(params.uri) {
+                        let uri = match helix_core::Uri::try_from(params.uri.as_str()) {
                             Ok(uri) => uri,
                             Err(err) => {
                                 log::error!("{err}");
@@ -1048,7 +1048,8 @@ impl Application {
             ..
         } = params
         {
-            self.jobs.callback(crate::open_external_url_callback(uri));
+            self.jobs
+                .callback(crate::open_external_url_callback(uri.as_str()));
             return lsp::ShowDocumentResult { success: true };
         };
 
@@ -1059,7 +1060,7 @@ impl Application {
             ..
         } = params;
 
-        let uri = match helix_core::Uri::try_from(uri) {
+        let uri = match helix_core::Uri::try_from(uri.as_str()) {
             Ok(uri) => uri,
             Err(err) => {
                 log::error!("{err}");
