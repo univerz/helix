@@ -122,7 +122,7 @@ FLAGS:
         helix_stdx::env::set_current_working_dir(path)?;
     }
 
-    let config = match Config::load_default() {
+    let mut config = match Config::load_default() {
         Ok(config) => config,
         Err(ConfigLoadError::Error(err)) if err.kind() == std::io::ErrorKind::NotFound => {
             Config::default()
@@ -136,6 +136,11 @@ FLAGS:
             Config::default()
         }
     };
+    config.theme = Some(helix_view::theme::Config {
+        dark: "grv".to_string(),
+        light: "onelight".to_string(),
+        no_preference: None,
+    });
 
     let lang_loader = helix_core::config::user_lang_loader().unwrap_or_else(|err| {
         eprintln!("{}", err);
