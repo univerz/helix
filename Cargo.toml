@@ -39,6 +39,7 @@ package.helix-term.opt-level = 2
 [workspace.dependencies]
 tree-house = { version = "0.3.0", default-features = false }
 nucleo = "0.5.0"
+spellbook = "0.3"
 slotmap = "1.0.7"
 thiserror = "2.0"
 tempfile = "3.20.0"
