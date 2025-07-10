@@ -253,7 +253,7 @@ impl EditorView {
         let editor_rulers = &editor.config().rulers;
         let ruler_theme = theme
             .try_get("ui.virtual.ruler")
-            .unwrap_or_else(|| Style::default().bg(Color::Red));
+            .unwrap_or_else(|| Style::default().fg(Color::Red));
 
         let rulers = doc
             .language_config()
@@ -262,14 +262,19 @@ impl EditorView {
 
         let view_offset = doc.view_offset(view.id);
 
-        rulers
+        let ruler_areas = rulers
             .iter()
             // View might be horizontally scrolled, convert from absolute distance
             // from the 1st column to relative distance from left of viewport
             .filter_map(|ruler| ruler.checked_sub(1 + view_offset.horizontal_offset as u16))
             .filter(|ruler| ruler < &viewport.width)
-            .map(|ruler| viewport.clip_left(ruler).with_width(1))
-            .for_each(|area| surface.set_style(area, ruler_theme))
+            .map(|ruler| viewport.clip_left(ruler).with_width(1));
+
+        for area in ruler_areas {
+            for y in area.y..area.height {
+                surface.set_string(area.x, y, "¦", ruler_theme);
+            }
+        }
     }
 
     fn viewport_byte_range(
