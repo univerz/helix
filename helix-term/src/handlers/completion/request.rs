@@ -142,7 +142,7 @@ impl helix_event::AsyncHook for CompletionHandler {
                 // and restarting completion requests. The small timeout here mainly
                 // serves to better handle cases where the completion handler
                 // may fall behind (so multiple events in the channel) and macros
-                Duration::from_millis(5)
+                Duration::from_millis(1)
             };
             Instant::now() + timeout
         })
@@ -267,7 +267,7 @@ fn request_completions(
         let mut items: Vec<_> = Vec::new();
         response.take_items(&mut items);
         context.insert(response.provider, response.context);
-        let deadline = Instant::now() + Duration::from_millis(100);
+        let deadline = Instant::now() + Duration::from_millis(1);
         loop {
             let Some(mut response) = timeout_at(deadline, handle_response(&mut requests, false))
                 .await

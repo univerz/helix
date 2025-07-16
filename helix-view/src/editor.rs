@@ -1019,8 +1019,8 @@ impl Default for Config {
             auto_format: true,
             default_yank_register: '"',
             auto_save: AutoSave::default(),
-            idle_timeout: Duration::from_millis(250),
-            completion_timeout: Duration::from_millis(150),
+            idle_timeout: Duration::from_millis(1),
+            completion_timeout: Duration::from_millis(1),
             preview_completion_insert: true,
             completion_trigger_len: 2,
             auto_info: true,
@@ -2222,7 +2222,7 @@ impl Editor {
                 _ = helix_event::redraw_requested() => {
                     if  !self.needs_redraw{
                         self.needs_redraw = true;
-                        let timeout = Instant::now() + Duration::from_millis(33);
+                        let timeout = Instant::now() + Duration::from_millis(8);
                         if timeout < self.idle_timer.deadline() && timeout < self.redraw_timer.deadline(){
                             self.redraw_timer.as_mut().reset(timeout)
                         }
