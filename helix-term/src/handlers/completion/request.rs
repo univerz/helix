@@ -142,7 +142,7 @@ impl helix_event::AsyncHook for CompletionHandler {
                 // and restarting completion requests. The small timeout here mainly
                 // serves to better handle cases where the completion handler
                 // may fall behind (so multiple events in the channel) and macros
-                Duration::from_millis(5)
+                Duration::from_millis(1)
             };
             Instant::now() + timeout
         })
