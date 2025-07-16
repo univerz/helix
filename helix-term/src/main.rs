@@ -136,11 +136,6 @@ FLAGS:
             Config::default()
         }
     };
-    config.theme = Some(helix_view::theme::Config {
-        dark: "grv".to_string(),
-        light: "onelight".to_string(),
-        no_preference: None,
-    });
 
     let lang_loader = helix_core::config::user_lang_loader().unwrap_or_else(|err| {
         eprintln!("{}", err);

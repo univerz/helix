@@ -1038,7 +1038,7 @@ impl Default for Config {
             indent_guides: IndentGuidesConfig::default(),
             color_modes: false,
             soft_wrap: SoftWrap {
-                enable: Some(true),
+                enable: Some(false),
                 ..SoftWrap::default()
             },
             text_width: 80,

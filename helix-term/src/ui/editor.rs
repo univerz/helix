@@ -475,6 +475,7 @@ impl EditorView {
         view: &View,
         theme: &Theme,
     ) -> Option<OverlayHighlights> {
+        return None;
         // This is **very** ***very*** naive and not at all reflective of what the actual
         // integration will look like. Doing this per-render is very needlessly expensive.
         // Instead it should be done in the background and possibly incrementally (only
