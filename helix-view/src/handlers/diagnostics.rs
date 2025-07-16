@@ -21,7 +21,7 @@ struct DiagnosticTimeout {
     generation: usize,
 }
 
-const TIMEOUT: Duration = Duration::from_millis(350);
+const TIMEOUT: Duration = Duration::from_millis(1);
 
 impl AsyncHook for DiagnosticTimeout {
     type Event = DiagnosticEvent;

@@ -19,7 +19,7 @@ pub(super) struct DocumentColorsHandler {
     docs: HashSet<DocumentId>,
 }
 
-const DOCUMENT_CHANGE_DEBOUNCE: Duration = Duration::from_millis(250);
+const DOCUMENT_CHANGE_DEBOUNCE: Duration = Duration::from_millis(1);
 
 impl helix_event::AsyncHook for DocumentColorsHandler {
     type Event = DocumentColorsEvent;

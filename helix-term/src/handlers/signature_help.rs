@@ -29,7 +29,7 @@ enum State {
 
 /// debounce timeout in ms, value taken from VSCode
 /// TODO: make this configurable?
-const TIMEOUT: u64 = 120;
+const TIMEOUT: u64 = 1;
 
 #[derive(Debug)]
 pub(super) struct SignatureHelpHandler {
